@@ -137,9 +137,9 @@ sed -i 's/192.168.1.1/10.0.0.11/g' package/base-files/files/bin/config_generate
 sed -i "s/hostname='.*'/hostname='AX3600'/g" package/base-files/files/bin/config_generate
 sed -i 's|^root:[^:]*:|root:$1$V4UetPzk$CYXluq4wUazHjmCDBCqXF.:|' package/base-files/files/etc/shadow
 
-# 首次开机自动配置为纯 AP 模式（10.0.0.11 / 网关 10.0.0.1 / 4网口全桥接 / 关闭DHCP与防火墙）
+# 首次开机自动配置为纯 AP 模式（使用 99z 前缀确保在 99-default-settings 之后执行）
 mkdir -p package/base-files/files/etc/uci-defaults
-cat <<'EOF' > package/base-files/files/etc/uci-defaults/99-ax3600-ap
+cat <<'EOF' > package/base-files/files/etc/uci-defaults/99z-ax3600-ap
 #!/bin/sh
 
 # 1. 删除 WAN/WAN6 接口，将全部 4 个物理网口 (wan + lan1~3) 并入 br-lan 网桥
@@ -152,24 +152,25 @@ for sec in $(uci show network | awk -F. '/\.name=.br-lan.$/ {print $2}'); do
 	done
 done
 
-# 2. 配置 LAN 静态管理地址、网关和 DNS（与原设备一致）
+# 2. 配置 LAN 静态管理地址、网关 (10.0.0.1) 和直连 OxiDNS (10.0.0.2)
 uci set network.lan.proto='static'
 uci set network.lan.ipaddr='10.0.0.11'
 uci set network.lan.netmask='255.255.255.0'
 uci set network.lan.gateway='10.0.0.1'
 uci -q delete network.lan.dns
-uci add_list network.lan.dns='10.0.0.1'
+uci add_list network.lan.dns='10.0.0.2'
 uci -q delete network.lan.ip6assign
 uci commit network
 
 # 3. 彻底关闭 LAN 口 DHCPv4 / DHCPv6 / RA，避免与主路由 (10.0.0.1) 冲突
 uci set dhcp.lan.ignore='1'
-uci -q delete dhcp.lan.ra
-uci -q delete dhcp.lan.dhcpv6
-uci -q delete dhcp.lan.ndp
+uci set dhcp.lan.dhcpv4='disabled'
 uci set dhcp.lan.ra='disabled'
 uci set dhcp.lan.dhcpv6='disabled'
 uci set dhcp.lan.ndp='disabled'
+uci -q delete dhcp.lan.ra_default
+uci -q delete dhcp.lan.ra_flags
+uci -q delete dhcp.lan.force
 uci commit dhcp
 
 # 4. 关闭纯 AP 不需要的防火墙、DNS 和 DHCPv6 后台服务
@@ -180,9 +181,35 @@ for svc in firewall dnsmasq odhcpd; do
 	fi
 done
 
+# 5. Watchcat 改为监测本地主路由网关 10.0.0.1（防 ping 8.8.8.8 误重启）
+if uci -q get watchcat.@watchcat[0] >/dev/null 2>&1; then
+	uci set watchcat.@watchcat[0].mode='ping_reboot'
+	uci set watchcat.@watchcat[0].pinghosts='10.0.0.1'
+	uci set watchcat.@watchcat[0].period='10m'
+	uci set watchcat.@watchcat[0].pingperiod='60s'
+	uci set watchcat.@watchcat[0].forcedelay='30'
+	uci commit watchcat
+fi
+
+# 6. 正确设置 AX3600 CPU 调频范围 (1.02GHz ~ 1.38GHz, schedutil)
+if uci -q get cpufreq.cpufreq >/dev/null 2>&1; then
+	uci set cpufreq.cpufreq.governor0='schedutil'
+	uci set cpufreq.cpufreq.minfreq0='1017600'
+	uci set cpufreq.cpufreq.maxfreq0='1382400'
+	uci set cpufreq.global.set='1'
+	uci commit cpufreq
+fi
+
+# 7. 默认关闭闲置的 AIoT 射频 (radio0)，避免广播无密码默认 SSID
+if uci -q get wireless.radio0 >/dev/null 2>&1; then
+	uci set wireless.radio0.disabled='1'
+	uci -q set wireless.default_radio0.disabled='1'
+	uci commit wireless
+fi
+
 exit 0
 EOF
-chmod +x package/base-files/files/etc/uci-defaults/99-ax3600-ap
+chmod +x package/base-files/files/etc/uci-defaults/99z-ax3600-ap
 
 luci_system_js="feeds/luci/modules/luci-mod-status/htdocs/luci-static/resources/view/status/include/10_system.js"
 firmware_version_anchor="_('Firmware Version'), (L.isObject(boardinfo.release) ? boardinfo.release.description + ' / ' : '') + (luciversion || ''),"
