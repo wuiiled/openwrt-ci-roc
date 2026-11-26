@@ -20,9 +20,9 @@ jobs:
       repo_url: https://github.com/laipeng668/openwrt-6.x.git
       repo_branch: 25.12-nss
       config_file: configs/IPQ807X.config
-      firmware_tag: ipq807x-xiaomi_ax3600-stock
+      firmware_tag: IPQ807X
       kernel_file: kernel-6.12
-      artifact_prefix: ipq807x-xiaomi_ax3600-stock
+      artifact_prefix: IPQ807X
       manifest_file: libwrt-qualcommax-ipq807x.manifest
       release_summary: >-
-        小米 AX3600 (xiaomi_ax3600-stock) 纯净 AP 定制版：Linux 6.12 内核 + 全功能 NSS 硬件加速 + ath11k 512MB 内存优化。首次开机自动配置为纯 AP 模式（管理 IP 10.0.0.11，网关 10.0.0.1，DNS 10.0.0.2，4 个网口全桥接，关闭 DHCP/防火墙与 AIoT 射频，用户 root，密码 password），使用原生 Bootstrap 主题，内置定时重启（默认关闭）、CPU 调频、WOL、Watchcat 与 iperf3，已精简所有路由/代理/USB 及磁盘文件系统驱动以兼容原厂 mtd12 分区。
+        IPQ807X 纯净 AP 定制版：Linux 6.12 内核 + 全功能 NSS 硬件加速 + ath11k 512MB 内存优化。首次开机自动配置为纯 AP 模式（管理 IP 10.0.0.11，网关 10.0.0.1，DNS 10.0.0.2，4 个网口全桥接，关闭 DHCP/防火墙，用户 root，密码 password），使用原生 Bootstrap 主题，内置定时重启（默认关闭）、CPU 调频、WOL、Watchcat 与 iperf3，已精简所有路由/代理/USB 及磁盘文件系统驱动。

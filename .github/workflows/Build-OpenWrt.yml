@@ -74,6 +74,9 @@ jobs:
       staging_key: ${{ steps.variables.outputs.staging_key }}
       version_info: ${{ steps.source.outputs.version_info }}
       version_kernel: ${{ steps.source.outputs.version_kernel }}
+      release_tag: ${{ steps.organize.outputs.release_tag }}
+      release_name: ${{ steps.organize.outputs.release_name }}
+      release_models: ${{ steps.organize.outputs.release_models }}
 
     steps:
     - name: Check Server Performance(检查服务器性能)
@@ -304,13 +307,74 @@ jobs:
       id: organize
       env:
         ARTIFACT_PREFIX: ${{ inputs.artifact_prefix }}
+        FIRMWARE_TAG: ${{ inputs.firmware_tag }}
         MANIFEST_FILE: ${{ inputs.manifest_file }}
         PACKAGE_EXTENSION: ${{ inputs.package_extension }}
       run: |
         cd "$OPENWRT_PATH"/bin/targets/*/*
-        cp "$OPENWRT_PATH/.config" "$ARTIFACT_PREFIX.config"
-        mv config.buildinfo "$ARTIFACT_PREFIX.config.buildinfo"
-        mv "$MANIFEST_FILE" "$ARTIFACT_PREFIX.manifest"
+        DEVICE_TARGET="$(awk -F '"' '/^CONFIG_TARGET_BOARD=/ {print $2; exit}' "$OPENWRT_PATH/.config")"
+        DEVICE_SUBTARGET="$(awk -F '"' '/^CONFIG_TARGET_SUBTARGET=/ {print $2; exit}' "$OPENWRT_PATH/.config")"
+        if [[ "$DEVICE_SUBTARGET" =~ ^[0-9]+$ || "$DEVICE_SUBTARGET" == "generic" ]]; then
+          TARGET_PREFIX="${DEVICE_TARGET}-${DEVICE_SUBTARGET}"
+        else
+          TARGET_PREFIX="${DEVICE_SUBTARGET}"
+        fi
+
+        mapfile -t BUILT_PROFILES < <(
+          if [ -s profiles.json ]; then
+            jq -r '.profiles | keys[]' profiles.json | sort -u
+          else
+            sed -nE 's/^CONFIG_TARGET_(DEVICE_)?[^=]+_DEVICE_([^=]+)=y$/\2/p' "$OPENWRT_PATH/.config" | sort -u
+          fi
+        )
+
+        DEVICE_COUNT="${#BUILT_PROFILES[@]}"
+        FILE_PREFIX="$ARTIFACT_PREFIX"
+        if [ "$DEVICE_COUNT" -eq 1 ]; then
+          MODEL_ID="${BUILT_PROFILES[0]}"
+          MODEL_SLUG="${TARGET_PREFIX}-${MODEL_ID}"
+          if [ "${{ inputs.rename_qualcommax_to_nowifi }}" = "true" ]; then
+            RELEASE_TAG="${FIRMWARE_TAG}"
+            RELEASE_NAME="${MODEL_SLUG}-nowifi"
+          else
+            RELEASE_TAG="${MODEL_SLUG}"
+            RELEASE_NAME="${MODEL_SLUG}"
+            FILE_PREFIX="${MODEL_SLUG}"
+          fi
+          MODEL_TITLE=""
+          if [ -s profiles.json ]; then
+            MODEL_TITLE="$(jq -r --arg id "$MODEL_ID" '
+              .profiles[$id].titles[0] // empty |
+              if .title then .title
+              else ([.vendor, .model, .variant] | map(select(. != null and . != "")) | join(" "))
+              end
+            ' profiles.json | tr '\r\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')"
+          fi
+          if [ -n "$MODEL_TITLE" ]; then
+            RELEASE_MODELS="\`${MODEL_ID}\` (${MODEL_TITLE})"
+          else
+            RELEASE_MODELS="\`${MODEL_ID}\`"
+          fi
+        elif [ "$DEVICE_COUNT" -gt 1 ]; then
+          RELEASE_TAG="${FIRMWARE_TAG}"
+          JOINED_MODELS="$(printf '%s, ' "${BUILT_PROFILES[@]}")"
+          JOINED_MODELS="${JOINED_MODELS%, }"
+          if [ "$DEVICE_COUNT" -le 3 ]; then
+            RELEASE_NAME="${TARGET_PREFIX}: ${JOINED_MODELS}"
+          else
+            RELEASE_NAME="${FIRMWARE_TAG} (${DEVICE_COUNT} models)"
+          fi
+          RELEASE_MODELS="$(printf '`%s`, ' "${BUILT_PROFILES[@]}")"
+          RELEASE_MODELS="${RELEASE_MODELS%, }"
+        else
+          RELEASE_TAG="${FIRMWARE_TAG}"
+          RELEASE_NAME="${FIRMWARE_TAG}"
+          RELEASE_MODELS="${FIRMWARE_TAG}"
+        fi
+
+        cp "$OPENWRT_PATH/.config" "$FILE_PREFIX.config"
+        mv config.buildinfo "$FILE_PREFIX.config.buildinfo"
+        mv "$MANIFEST_FILE" "$FILE_PREFIX.manifest"
         case "$PACKAGE_EXTENSION" in
           apk | ipk) ;;
           *)
@@ -328,7 +392,7 @@ jobs:
           echo "Error: no .$PACKAGE_EXTENSION package files found under $OPENWRT_PATH/bin/packages" >&2
           exit 1
         fi
-        tar -zcf "$ARTIFACT_PREFIX.Packages.tar.gz" packages
+        tar -zcf "$FILE_PREFIX.Packages.tar.gz" packages
         if [ "${{ inputs.rename_qualcommax_to_nowifi }}" = "true" ]; then
           for file in *qualcommax*.bin; do
             [ -e "$file" ] || continue
@@ -340,9 +404,14 @@ jobs:
           echo "Error: third-party source revision file was not generated: $third_party_sources" >&2
           exit 1
         fi
-        cp "$third_party_sources" "$ARTIFACT_PREFIX.third-party-sources.txt"
+        cp "$third_party_sources" "$FILE_PREFIX.third-party-sources.txt"
         rm -rf packages feeds.buildinfo version.buildinfo sha256sums profiles.json
-        echo "firmware_path=$PWD" >> "$GITHUB_OUTPUT"
+        {
+          echo "firmware_path=$PWD"
+          echo "release_tag=$RELEASE_TAG"
+          echo "release_name=$RELEASE_NAME"
+          echo "release_models=$RELEASE_MODELS"
+        } >> "$GITHUB_OUTPUT"
 
     - name: Upload Firmware Artifact(上传固件产物)
       uses: actions/upload-artifact@v4
@@ -374,18 +443,18 @@ jobs:
     - name: Upload Firmware To Release(发布固件)
       uses: ncipollo/release-action@v1
       with:
-        name: ${{ inputs.firmware_tag }}
+        name: ${{ needs.Build.outputs.release_name }}
         allowUpdates: true
         replacesArtifacts: true
         artifactErrorsFailBuild: true
-        tag: ${{ inputs.firmware_tag }}
+        tag: ${{ needs.Build.outputs.release_tag }}
         token: ${{ github.token }}
         artifacts: artifacts/firmware/*
         body: |
-          **This is OpenWrt Firmware for ${{ inputs.firmware_tag }}**
+          **This is OpenWrt Firmware for ${{ needs.Build.outputs.release_name }}**
           ### 📒 固件信息
           - ${{ inputs.release_summary }}
-          - 💻 目标机型: ${{ inputs.firmware_tag }}
+          - 💻 编译机型: ${{ needs.Build.outputs.release_models }}
           - ⚽ 固件源码: ${{ inputs.repo_url }}
           - 💝 源码分支: ${{ inputs.repo_branch }}
           - 🌐 默认地址: **10.0.0.11**（纯 AP 模式，网关 `10.0.0.1`，DNS `10.0.0.2`）
