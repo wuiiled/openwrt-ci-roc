@@ -25,4 +25,4 @@ jobs:
       artifact_prefix: IPQ807X
       manifest_file: libwrt-qualcommax-ipq807x.manifest
       release_summary: >-
-        这是开启全功能NSS的6.12内核固件，默认主题为Aurora；该固件在ImmortalWrt的基础上，添加了额外的软件包cpufreq、ddns、upnp、wol、samba4、vlmcsd、autoreboot、uhttpd、frps、frpc、diskman、hd-idle、acme、wireguard、watchcat、3cat、passwall，并添加了若干工具，具体详见IPQ807X.config和General.config。
+        小米 AX3600 (xiaomi_ax3600-stock) 纯净 AP 定制版：Linux 6.12 内核 + 全功能 NSS 硬件加速 + ath11k 512MB 内存优化。首次开机自动配置为纯 AP 模式（管理 IP 10.0.0.11，网关/DNS 10.0.0.1，4 个网口全桥接，关闭 DHCP/防火墙，用户 root，密码 password），内置 Aurora 主题、定时重启、CPU 调频、WOL、Watchcat 与 iperf3，已精简所有路由/代理/USB 插件以兼容原厂 mtd12 分区。

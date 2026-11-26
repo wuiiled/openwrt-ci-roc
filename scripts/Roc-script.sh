@@ -132,9 +132,58 @@ clone_repository() {
 mkdir -p "$(dirname "$THIRD_PARTY_SOURCES_FILE")"
 printf 'Repository\tBranch\tCommit\n' > "$THIRD_PARTY_SOURCES_FILE"
 
-# 修改默认IP & 固件名称 & 编译署名和时间
-sed -i 's/192.168.1.1/192.168.2.1/g' package/base-files/files/bin/config_generate
-sed -i "s/hostname='.*'/hostname='Roc'/g" package/base-files/files/bin/config_generate
+# 修改默认IP & 固件名称 & root密码 & 编译署名和时间
+sed -i 's/192.168.1.1/10.0.0.11/g' package/base-files/files/bin/config_generate
+sed -i "s/hostname='.*'/hostname='AX3600'/g" package/base-files/files/bin/config_generate
+sed -i 's|^root:[^:]*:|root:$1$V4UetPzk$CYXluq4wUazHjmCDBCqXF.:|' package/base-files/files/etc/shadow
+
+# 首次开机自动配置为纯 AP 模式（10.0.0.11 / 网关 10.0.0.1 / 4网口全桥接 / 关闭DHCP与防火墙）
+mkdir -p package/base-files/files/etc/uci-defaults
+cat <<'EOF' > package/base-files/files/etc/uci-defaults/99-ax3600-ap
+#!/bin/sh
+
+# 1. 删除 WAN/WAN6 接口，将全部 4 个物理网口 (wan + lan1~3) 并入 br-lan 网桥
+uci -q delete network.wan
+uci -q delete network.wan6
+for sec in $(uci show network | awk -F. '/\.name=.br-lan.$/ {print $2}'); do
+	uci -q delete "network.${sec}.ports"
+	for port in wan lan1 lan2 lan3; do
+		uci add_list "network.${sec}.ports=$port"
+	done
+done
+
+# 2. 配置 LAN 静态管理地址、网关和 DNS（与原设备一致）
+uci set network.lan.proto='static'
+uci set network.lan.ipaddr='10.0.0.11'
+uci set network.lan.netmask='255.255.255.0'
+uci set network.lan.gateway='10.0.0.1'
+uci -q delete network.lan.dns
+uci add_list network.lan.dns='10.0.0.1'
+uci -q delete network.lan.ip6assign
+uci commit network
+
+# 3. 彻底关闭 LAN 口 DHCPv4 / DHCPv6 / RA，避免与主路由 (10.0.0.1) 冲突
+uci set dhcp.lan.ignore='1'
+uci -q delete dhcp.lan.ra
+uci -q delete dhcp.lan.dhcpv6
+uci -q delete dhcp.lan.ndp
+uci set dhcp.lan.ra='disabled'
+uci set dhcp.lan.dhcpv6='disabled'
+uci set dhcp.lan.ndp='disabled'
+uci commit dhcp
+
+# 4. 关闭纯 AP 不需要的防火墙、DNS 和 DHCPv6 后台服务
+for svc in firewall dnsmasq odhcpd; do
+	if [ -x "/etc/init.d/$svc" ]; then
+		/etc/init.d/$svc disable
+		/etc/init.d/$svc stop
+	fi
+done
+
+exit 0
+EOF
+chmod +x package/base-files/files/etc/uci-defaults/99-ax3600-ap
+
 luci_system_js="feeds/luci/modules/luci-mod-status/htdocs/luci-static/resources/view/status/include/10_system.js"
 firmware_version_anchor="_('Firmware Version'), (L.isObject(boardinfo.release) ? boardinfo.release.description + ' / ' : '') + (luciversion || ''),"
 grep -Fq "$firmware_version_anchor" "$luci_system_js" || { echo "Error: LuCI firmware version anchor was not found in $luci_system_js" >&2; exit 1; }
@@ -145,10 +194,10 @@ sed -i "s#_('Firmware Version'), (L\.isObject(boardinfo\.release) ? boardinfo\.r
                 ? boardinfo.release.description + ' / '\n \
                 : '') + (luciversion || '') + ' / ',\n \
             E('a', {\n \
-                href: 'https://github.com/laipeng668/openwrt-ci-roc/releases',\n \
+                href: 'https://github.com/wuiiled/openwrt-ci-roc/releases',\n \
                 target: '_blank',\n \
                 rel: 'noopener noreferrer'\n \
-                }, [ 'Built by Roc $(date "+%Y-%m-%d %H:%M:%S")' ])\n \
+                }, [ 'AX3600 AP $(date "+%Y-%m-%d %H:%M:%S")' ])\n \
             ]),#" "$luci_system_js"
 
 # 调整NSS驱动q6_region内存区域预留大小（ipq6018.dtsi默认预留85MB，ipq6018-512m.dtsi默认预留55MB，带WiFi必须至少预留54MB，以下分别是改成预留16MB、32MB、64MB和96MB）
