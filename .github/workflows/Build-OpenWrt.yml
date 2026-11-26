@@ -385,7 +385,7 @@ jobs:
           **This is OpenWrt Firmware for ${{ inputs.firmware_tag }}**
           ### 📒 固件信息
           - ${{ inputs.release_summary }}
-          - 💻 这是 ${{ inputs.firmware_tag }} 平台使用的 OpenWrt 固件
+          - 💻 目标机型: ${{ inputs.firmware_tag }}
           - ⚽ 固件源码: ${{ inputs.repo_url }}
           - 💝 源码分支: ${{ inputs.repo_branch }}
           - 🌐 默认地址: **10.0.0.11**（纯 AP 模式，网关 `10.0.0.1`，DNS `10.0.0.2`）
